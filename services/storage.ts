@@ -13,7 +13,7 @@ export class StorageService {
     try {
       await AsyncStorage.setItem(STORAGE_KEYS.DELIVERY_REQUESTS, JSON.stringify(requests));
     } catch (error) {
-      console.error("Error saving delivery requests:", error);
+      console.log("Error saving delivery requests:", error);
     }
   }
 
@@ -23,7 +23,7 @@ export class StorageService {
       const data = await AsyncStorage.getItem(STORAGE_KEYS.DELIVERY_REQUESTS);
       return data ? JSON.parse(data) : [];
     } catch (error) {
-      console.error("Error getting delivery requests:", error);
+      console.log("Error getting delivery requests:", error);
       return [];
     }
   }
@@ -35,7 +35,7 @@ export class StorageService {
       requests.push(request);
       await this.saveDeliveryRequests(requests);
     } catch (error) {
-      console.error("Error adding delivery request:", error);
+      console.log("Error adding delivery request:", error);
     }
   }
 
@@ -49,7 +49,7 @@ export class StorageService {
         await this.saveDeliveryRequests(requests);
       }
     } catch (error) {
-      console.error("Error updating delivery request:", error);
+      console.log("Error updating delivery request:", error);
     }
   }
 
@@ -58,7 +58,7 @@ export class StorageService {
     try {
       await AsyncStorage.setItem(STORAGE_KEYS.PENDING_SYNC, JSON.stringify(requests));
     } catch (error) {
-      console.error("Error saving pending sync:", error);
+      console.log("Error saving pending sync:", error);
     }
   }
 
@@ -68,7 +68,7 @@ export class StorageService {
       const data = await AsyncStorage.getItem(STORAGE_KEYS.PENDING_SYNC);
       return data ? JSON.parse(data) : [];
     } catch (error) {
-      console.error("Error getting pending sync:", error);
+      console.log("Error getting pending sync:", error);
       return [];
     }
   }
@@ -78,7 +78,7 @@ export class StorageService {
     try {
       await AsyncStorage.removeItem(STORAGE_KEYS.PENDING_SYNC);
     } catch (error) {
-      console.error("Error clearing pending sync:", error);
+      console.log("Error clearing pending sync:", error);
     }
   }
 
@@ -87,7 +87,7 @@ export class StorageService {
     try {
       await AsyncStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(userData));
     } catch (error) {
-      console.error("Error saving user data:", error);
+      console.log("Error saving user data:", error);
     }
   }
 
@@ -97,7 +97,7 @@ export class StorageService {
       const data = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
       return data ? JSON.parse(data) : null;
     } catch (error) {
-      console.error("Error getting user data:", error);
+      console.log("Error getting user data:", error);
       return null;
     }
   }
@@ -111,7 +111,7 @@ export class StorageService {
         STORAGE_KEYS.USER_DATA,
       ]);
     } catch (error) {
-      console.error("Error clearing all data:", error);
+      console.log("Error clearing all data:", error);
     }
   }
 } 

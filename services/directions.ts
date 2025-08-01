@@ -39,7 +39,7 @@ export class DirectionsService {
       
       return null;
     } catch (error) {
-      console.error('Error fetching route:', error);
+      console.log('Error fetching route:', error);
       return null;
     }
     */

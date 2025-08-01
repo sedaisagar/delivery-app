@@ -1,11 +1,14 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
-import { ScrollView, Text, TouchableOpacity, View } from "react-native";
+import { Alert, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import MapWrapper, { Marker, Polyline, PROVIDER_GOOGLE } from '../../components/MapWrapper';
+import PartnerSelector from "../../components/PartnerSelector";
+import { useAuth } from "../../contexts/AuthContext";
+import { deliveryService } from "../../services/delivery";
 import { DirectionsService } from "../../services/directions";
 import { SyncService } from "../../services/sync";
-import { DeliveryRequest } from "../../types/delivery";
+import { DeliveryRequest, Partner } from "../../types/delivery";
 
 interface RouteInfo {
   points: { latitude: number; longitude: number }[];
@@ -14,14 +17,24 @@ interface RouteInfo {
 }
 
 export default function DeliveryDetailsScreen() {
-  const { id } = useLocalSearchParams();
+  const params = useLocalSearchParams();
+  const id = params?.id as string;
+  const { user } = useAuth();
   const [request, setRequest] = useState<DeliveryRequest | null>(null);
   const [loading, setLoading] = useState(true);
   const [routeInfo, setRouteInfo] = useState<RouteInfo | null>(null);
   const [routeLoading, setRouteLoading] = useState(false);
+  const [showPartnerSelector, setShowPartnerSelector] = useState(false);
+  const [selectedPartner, setSelectedPartner] = useState<Partner | null>(null);
+
+  // Role-based access control
+  const isCustomer = user?.role === "customer";
+  const isDriver = user?.role === "driver";
 
   useEffect(() => {
-    loadRequestDetails();
+    if (id) {
+      loadRequestDetails();
+    }
   }, [id]);
 
   useEffect(() => {
@@ -31,51 +44,27 @@ export default function DeliveryDetailsScreen() {
   }, [request]);
 
   const loadRequestDetails = async () => {
+    if (!id) {
+      console.log("No ID provided");
+      Alert.alert("Error", "No delivery request ID provided.");
+      router.back();
+      return;
+    }
+
     try {
       setLoading(true);
-      const requests = await SyncService.getDeliveryRequests();
-      const foundRequest = requests.find(req => req.id === id);
       
-      if (foundRequest) {
-        setRequest(foundRequest);
-      } else {
-        // Fallback to mock data if not found
-        const mockRequest: DeliveryRequest = {
-          id: id as string,
-          pickupAddress: "123 Main St, City",
-          dropoffAddress: "456 Oak Ave, Town",
-          customerName: "John Doe",
-          customerPhone: "+1234567890",
-          deliveryNote: "Please ring doorbell",
-          status: "pending",
-          syncStatus: "synced",
-          createdAt: new Date().toISOString(),
-          coordinates: {
-            pickup: { latitude: 37.78825, longitude: -122.4324 },
-            dropoff: { latitude: 37.78925, longitude: -122.4344 },
-          },
-        };
-        setRequest(mockRequest);
-      }
+      console.log("Fetching single delivery request by ID:", id);
+      
+      // Direct API call using the ID from the screen
+      const serverRequest = await deliveryService.getDeliveryRequest(Number(id));
+      console.log("Server request received:", serverRequest);
+      setRequest(serverRequest);
+      
     } catch (error) {
-      console.error("Error loading request details:", error);
-      // Fallback to mock data on error
-      const mockRequest: DeliveryRequest = {
-        id: id as string,
-        pickupAddress: "123 Main St, City",
-        dropoffAddress: "456 Oak Ave, Town",
-        customerName: "John Doe",
-        customerPhone: "+1234567890",
-        deliveryNote: "Please ring doorbell",
-        status: "pending",
-        syncStatus: "synced",
-        createdAt: new Date().toISOString(),
-        coordinates: {
-          pickup: { latitude: 37.78825, longitude: -122.4324 },
-          dropoff: { latitude: 37.78925, longitude: -122.4344 },
-        },
-      };
-      setRequest(mockRequest);
+      console.log("Error fetching from server:", error);
+      Alert.alert("Error", "Failed to load delivery request details. Please try again.");
+      router.back();
     } finally {
       setLoading(false);
     }
@@ -103,7 +92,7 @@ export default function DeliveryDetailsScreen() {
         setRouteInfo(fallbackRoute);
       }
     } catch (error) {
-      console.error("Error loading route:", error);
+      console.log("Error loading route:", error);
       // Use fallback route
       const fallbackRoute = DirectionsService.getFallbackRoute(
         request.coordinates.pickup,
@@ -112,6 +101,63 @@ export default function DeliveryDetailsScreen() {
       setRouteInfo(fallbackRoute);
     } finally {
       setRouteLoading(false);
+    }
+  };
+
+  const handlePartnerSelect = async (partner: Partner) => {
+    if (!request) return;
+
+    // Only customers can assign drivers
+    if (!isCustomer) {
+      Alert.alert("Access Denied", "Only customers can assign drivers to deliveries.");
+      return;
+    }
+
+    try {
+      // Update the request with the selected partner
+      await SyncService.updateRequestPartner(request.id, partner.id);
+      
+      // Update local state
+      setRequest(prev => prev ? {
+        ...prev,
+        partnerId: partner.id,
+        partnerName: partner.name
+      } : null);
+      
+      setSelectedPartner(partner);
+      
+      Alert.alert("Success", `Driver ${partner.name} assigned to delivery`);
+    } catch (error) {
+      console.log("Error assigning driver:", error);
+      Alert.alert("Error", "Failed to assign driver to delivery. Please try again.");
+    }
+  };
+
+  const handleStatusUpdate = async (newStatus: DeliveryRequest["status"]) => {
+    if (!request) return;
+
+    // Only drivers can update status
+    if (!isDriver) {
+      Alert.alert("Access Denied", "Only drivers can update delivery status.");
+      return;
+    }
+
+    // Drivers can only update status of requests assigned to them
+    if (request.partnerId && request.partnerId !== user?.id) {
+      Alert.alert("Access Denied", "You can only update status of deliveries assigned to you.");
+      return;
+    }
+
+    try {
+      await SyncService.updateRequestStatus(request.id, newStatus);
+      
+      // Update local state
+      setRequest(prev => prev ? { ...prev, status: newStatus } : null);
+      
+      Alert.alert("Success", `Status updated to ${newStatus.replace("_", " ")}`);
+    } catch (error) {
+      console.log("Error updating status:", error);
+      Alert.alert("Error", "Failed to update delivery status. Please try again.");
     }
   };
 
@@ -153,10 +199,14 @@ export default function DeliveryDetailsScreen() {
     switch (status) {
       case "pending":
         return "bg-yellow-100 text-yellow-800";
+      case "assigned":
+        return "bg-blue-100 text-blue-800";
       case "in_progress":
         return "bg-blue-100 text-blue-800";
       case "completed":
         return "bg-success text-white";
+      case "cancelled":
+        return "bg-red-100 text-red-800";
       default:
         return "bg-gray-100 text-gray-800";
     }
@@ -405,7 +455,7 @@ export default function DeliveryDetailsScreen() {
           </View>
 
           {/* Delivery Note */}
-          {request.deliveryNote && (
+          {request.deliveryNote && request.deliveryNote.trim() !== "" && (
             <View className="bg-white p-6 rounded-2xl shadow-card mt-5">
               <View className="flex-row items-center space-x-3 mb-6">
                 <View className="bg-blue-100 p-3 rounded-full">
@@ -426,9 +476,256 @@ export default function DeliveryDetailsScreen() {
             </View>
           )}
 
+          {/* Driver Assignment - Only visible to customers and only when no driver is assigned */}
+          {isCustomer && !request.driverName && !request.driverEmail && (
+            <View className="bg-white p-6 rounded-2xl shadow-card mt-5">
+              <View className="flex-row items-center space-x-3 mb-6">
+                <View className="bg-yellow-100 p-3 rounded-full">
+                  <Ionicons name="car" size={24} color="#F59E0B" />
+                </View>
+                <Text className="ml-5 font-quicksand-bold text-dark-100 text-xl">
+                  Driver Assignment
+                </Text>
+              </View>
+              
+              <View className="bg-gray-50 p-4 rounded-xl">
+                <View className="flex-row items-center space-x-3">
+                  <Ionicons name="car-outline" size={20} color="#878787" />
+                  <Text className="ml-2 font-quicksand text-gray-100 text-base">
+                    No driver assigned
+                  </Text>
+                </View>
+                <Text className="ml-8 font-quicksand text-gray-100 text-sm mt-1">
+                  Select a driver to assign to this delivery
+                </Text>
+              </View>
+              
+              <TouchableOpacity
+                onPress={() => setShowPartnerSelector(true)}
+                className="bg-primary mt-4 p-4 rounded-xl"
+                style={{
+                  shadowColor: "#FE8C00",
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.15,
+                  shadowRadius: 4,
+                  elevation: 2,
+                }}
+              >
+                <View className="flex-row items-center justify-center space-x-2">
+                  <Ionicons name="car" size={20} color="white" />
+                  <Text className="font-quicksand-bold text-white text-base">
+                    Assign Driver
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Driver Information - Show when driver is assigned */}
+          {(request.driverName || request.driverEmail) && (
+            <View className="bg-white p-6 rounded-2xl shadow-card mt-5">
+              <View className="flex-row items-center space-x-3 mb-6">
+                <View className="bg-green-100 p-3 rounded-full">
+                  <Ionicons name="car" size={24} color="#2F9B65" />
+                </View>
+                <Text className="ml-5 font-quicksand-bold text-dark-100 text-xl">
+                  Assigned Driver
+                </Text>
+              </View>
+              
+              <View className="space-y-4">
+                {request.driverName && (
+                  <View className="bg-green-50 p-4 rounded-xl">
+                    <View className="flex-row items-center space-x-3">
+                      <Ionicons name="person" size={20} color="#2F9B65" />
+                      <Text className="ml-2 font-quicksand-bold text-dark-100 text-base">
+                        {request.driverName}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+                
+                {request.driverEmail && (
+                  <View className="bg-green-50 p-4 rounded-xl">
+                    <View className="flex-row items-center space-x-3">
+                      <Ionicons name="mail" size={20} color="#2F9B65" />
+                      <Text className="ml-2 font-quicksand text-dark-100 text-base">
+                        {request.driverEmail}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+                
+                {request.assignedAt && (
+                  <View className="bg-green-50 p-4 rounded-xl">
+                    <View className="flex-row items-center space-x-3">
+                      <Ionicons name="time" size={20} color="#2F9B65" />
+                      <Text className="ml-2 font-quicksand text-dark-100 text-base">
+                        Assigned on {new Date(request.assignedAt).toLocaleDateString()} at {new Date(request.assignedAt).toLocaleTimeString([], { 
+                          hour: '2-digit', 
+                          minute: '2-digit' 
+                        })}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+                
+                {request.assignedByEmail && (
+                  <View className="bg-green-50 p-4 rounded-xl">
+                    <View className="flex-row items-center space-x-3">
+                      <Ionicons name="person-circle" size={20} color="#2F9B65" />
+                      <Text className="ml-2 font-quicksand text-dark-100 text-base">
+                        Assigned by: {request.assignedByEmail}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+              </View>
+            </View>
+          )}
+
+          {/* Action Buttons - Role-based access */}
+          {(() => {
+            // Check if there are any actions available
+            const hasActions = isDriver && (
+              request.status === "pending" ||
+              request.status === "assigned" ||
+              request.status === "in_progress" ||
+              (request.status !== "completed" && request.status !== "cancelled")
+            );
+            
+            if (!hasActions) return null;
+            
+            return (
+              <View className="bg-white p-6 rounded-2xl shadow-card mt-5">
+                <View className="flex-row items-center space-x-3 mb-6">
+                  <View className="bg-red-100 p-3 rounded-full">
+                    <Ionicons name="settings" size={24} color="#EF4444" />
+                  </View>
+                  <Text className="ml-5 font-quicksand-bold text-dark-100 text-xl">
+                    Actions
+                  </Text>
+                </View>
+                
+                {/* Only drivers can update status */}
+                {isDriver ? (
+                  <View className="space-y-3">
+                    {request.status === "pending" && (
+                      <TouchableOpacity
+                        onPress={() => handleStatusUpdate("assigned")}
+                        className="bg-blue-500 p-4 rounded-xl"
+                        style={{
+                          shadowColor: "#3B82F6",
+                          shadowOffset: { width: 0, height: 2 },
+                          shadowOpacity: 0.15,
+                          shadowRadius: 4,
+                          elevation: 2,
+                        }}
+                      >
+                        <View className="flex-row items-center justify-center space-x-2">
+                          <Ionicons name="checkmark-circle" size={20} color="white" />
+                          <Text className="font-quicksand-bold text-white text-base">
+                            Accept Assignment
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    )}
+                    
+                    {request.status === "assigned" && (
+                      <TouchableOpacity
+                        onPress={() => handleStatusUpdate("in_progress")}
+                        className="bg-blue-500 p-4 rounded-xl"
+                        style={{
+                          shadowColor: "#3B82F6",
+                          shadowOffset: { width: 0, height: 2 },
+                          shadowOpacity: 0.15,
+                          shadowRadius: 4,
+                          elevation: 2,
+                        }}
+                      >
+                        <View className="flex-row items-center justify-center space-x-2">
+                          <Ionicons name="play" size={20} color="white" />
+                          <Text className="font-quicksand-bold text-white text-base">
+                            Start Delivery
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    )}
+                    
+                    {request.status === "in_progress" && (
+                      <TouchableOpacity
+                        onPress={() => handleStatusUpdate("completed")}
+                        className="bg-success p-4 rounded-xl"
+                        style={{
+                          shadowColor: "#2F9B65",
+                          shadowOffset: { width: 0, height: 2 },
+                          shadowOpacity: 0.15,
+                          shadowRadius: 4,
+                          elevation: 2,
+                        }}
+                      >
+                        <View className="flex-row items-center justify-center space-x-2">
+                          <Ionicons name="checkmark" size={20} color="white" />
+                          <Text className="font-quicksand-bold text-white text-base">
+                            Mark as Completed
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    )}
+                    
+                    {request.status !== "completed" && request.status !== "cancelled" && (
+                      <TouchableOpacity
+                        onPress={() => handleStatusUpdate("cancelled")}
+                        className="bg-red-500 p-4 rounded-xl"
+                        style={{
+                          shadowColor: "#EF4444",
+                          shadowOffset: { width: 0, height: 2 },
+                          shadowOpacity: 0.15,
+                          shadowRadius: 4,
+                          elevation: 2,
+                        }}
+                      >
+                        <View className="flex-row items-center justify-center space-x-2">
+                          <Ionicons name="close" size={20} color="white" />
+                          <Text className="font-quicksand-bold text-white text-base">
+                            Cancel Delivery
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ) : (
+                  /* Customers and admins see read-only message */
+                  <View className="bg-gray-50 p-4 rounded-xl">
+                    <View className="flex-row items-center space-x-3">
+                      <Ionicons name="information-circle" size={20} color="#878787" />
+                      <Text className="ml-2 font-quicksand text-gray-100 text-base">
+                        {isCustomer 
+                          ? "Only assigned drivers can update delivery status" 
+                          : "Status updates are restricted to assigned drivers"
+                        }
+                      </Text>
+                    </View>
+                  </View>
+                )}
+              </View>
+            );
+          })()}
+
           <View className="h-20" />
         </View>
       </ScrollView>
+
+      {/* Partner Selector Modal - Only for customers */}
+      {isCustomer && (
+        <PartnerSelector
+          visible={showPartnerSelector}
+          onClose={() => setShowPartnerSelector(false)}
+          onSelectPartner={handlePartnerSelect}
+          selectedPartnerId={request.partnerId}
+          location={request.pickupAddress}
+        />
+      )}
     </View>
   );
 } 

@@ -1,13 +1,15 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Location from "expo-location";
 import { router } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import MapPicker from "../components/MapPicker";
+import { useAuth } from "../contexts/AuthContext";
 import { SyncService } from "../services/sync";
 import { DeliveryFormData } from "../types/delivery";
 
 export default function NewDeliveryScreen() {
+  const { user } = useAuth();
   const [formData, setFormData] = useState<DeliveryFormData>({
     pickupAddress: "",
     dropoffAddress: "",
@@ -29,7 +31,33 @@ export default function NewDeliveryScreen() {
     address: string;
   } | null>(null);
 
+  // Block drivers from accessing this screen
+  useEffect(() => {
+    if (user?.role === "driver") {
+      Alert.alert(
+        "Access Denied",
+        "Drivers cannot create delivery requests. You can only view and update assigned deliveries.",
+        [
+          {
+            text: "Go Back",
+            onPress: () => router.back(),
+          },
+        ]
+      );
+    }
+  }, [user, router]);
+
+  // Set customer name from auth context when component mounts
+  useEffect(() => {
+    if (user) {
+      const fullName = `${user.first_name || ''} ${user.last_name || ''}`.trim();
+      setFormData(prev => ({ ...prev, customerName: fullName }));
+    }
+  }, [user]);
+
   const handleInputChange = (field: keyof DeliveryFormData, value: string) => {
+    // Don't allow editing customer name
+    if (field === "customerName") return;
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
@@ -37,7 +65,7 @@ export default function NewDeliveryScreen() {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert("Permission denied", "Location permission is required");
+        Alert.alert("Permission denied", "Location permission is required to get your current location");
         return;
       }
 
@@ -66,7 +94,8 @@ export default function NewDeliveryScreen() {
         }
       }
     } catch (error) {
-      Alert.alert("Error", "Failed to get current location");
+      console.log("Error getting current location:", error);
+      Alert.alert("Error", "Failed to get current location. Please try again.");
     }
   };
 
@@ -87,10 +116,6 @@ export default function NewDeliveryScreen() {
     }
     if (!formData.dropoffAddress.trim()) {
       Alert.alert("Error", "Please enter dropoff address");
-      return false;
-    }
-    if (!formData.customerName.trim()) {
-      Alert.alert("Error", "Please enter customer name");
       return false;
     }
     if (!formData.customerPhone.trim()) {
@@ -127,16 +152,31 @@ export default function NewDeliveryScreen() {
       const isOnline = SyncService.isDeviceOnline();
       Alert.alert(
         "Success",
-        `Delivery request created successfully!${!isOnline ? " (Will sync when online)" : ""}`,
+        "Delivery request created successfully!",
         [
           {
-            text: "OK",
+            text: "Go Back",
             onPress: () => router.back(),
+          },
+          {
+            text: "Create Another",
+            onPress: () => {
+              setFormData({
+                pickupAddress: "",
+                dropoffAddress: "",
+                customerName: "",
+                customerPhone: "",
+                deliveryNote: "",
+              });
+              setPickupLocation(null);
+              setDropoffLocation(null);
+            },
           },
         ]
       );
     } catch (error) {
-      Alert.alert("Error", "Failed to create delivery request");
+      console.log("Error creating delivery request:", error);
+      Alert.alert("Error", "Failed to create delivery request. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
@@ -187,13 +227,14 @@ export default function NewDeliveryScreen() {
                   <Text className="font-quicksand-bold text-dark-100 text-lg mb-3">
                     Customer Name
                   </Text>
-                  <TextInput
-                    value={formData.customerName}
-                    onChangeText={(text) => handleInputChange("customerName", text)}
-                    placeholder="Enter customer name"
-                    className="bg-gray-50 p-4 rounded-xl font-quicksand text-base"
-                    returnKeyType="next"
-                  />
+                  <View className="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                    <View className="flex-row items-center space-x-2">
+                      <Ionicons name="person" size={16} color="#878787" />
+                      <Text className="font-quicksand text-dark-100 text-base flex-1">
+                        {formData.customerName || "Loading..."}
+                      </Text>
+                    </View>
+                  </View>
                 </View>
 
                 <View>

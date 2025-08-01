@@ -1,29 +1,43 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Tabs } from "expo-router";
+import { Tabs, useRouter } from "expo-router";
+import { useEffect } from "react";
+import { useAuth } from "../../contexts/AuthContext";
 
 export default function TabLayout() {
+  const { isAuthenticated, user } = useAuth();
+  const router = useRouter();
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!isAuthenticated) {
+      router.replace("/login");
+    }
+  }, [isAuthenticated, router]);
+
+  // Don't render tabs if not authenticated
+  if (!isAuthenticated) {
+    return null;
+  }
+
+  const getDeliveryTabTitle = () => {
+    if (user?.role === "driver") {
+      return "My Assignments";
+    }
+    return "Deliveries";
+  };
+
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: "#FE8C00",
-        tabBarInactiveTintColor: "#878787",
+        tabBarActiveTintColor: "#FF6B35",
+        tabBarInactiveTintColor: "#9CA3AF",
         tabBarStyle: {
-          backgroundColor: "white",
+          backgroundColor: "#FFFFFF",
           borderTopWidth: 1,
-          borderTopColor: "#F3F4F6",
-          paddingTop: 8,
-          paddingBottom: 8,
-          height: 80,
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: -2 },
-          shadowOpacity: 0.1,
-          shadowRadius: 8,
-          elevation: 8,
-        },
-        tabBarLabelStyle: {
-          fontFamily: "Quicksand-Bold",
-          fontSize: 12,
-          marginTop: 4,
+          borderTopColor: "#E5E7EB",
+          paddingBottom: 5,
+          paddingTop: 5,
+          height: 60,
         },
         headerShown: false,
       }}
@@ -40,7 +54,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="delivery-requests"
         options={{
-          title: "Requests",
+          title: getDeliveryTabTitle(),
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="list" size={size} color={color} />
           ),

@@ -1,29 +1,69 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
-import { FlatList, Text, TouchableOpacity, View } from "react-native";
+import { Alert, FlatList, Text, TouchableOpacity, View } from "react-native";
 import CustomRefreshControl from "../../components/RefreshControl";
+import { useAuth } from "../../contexts/AuthContext";
+import { deliveryService } from "../../services/delivery";
 import { SyncService } from "../../services/sync";
 import { DeliveryRequest } from "../../types/delivery";
 
 export default function DeliveryRequestsScreen() {
+  const { user } = useAuth();
   const [requests, setRequests] = useState<DeliveryRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
 
+  // Load requests when component mounts
   useEffect(() => {
-    loadRequests();
+    loadRequests(true); // Reset to first page
   }, []);
 
-  const loadRequests = async () => {
+  // Remove useFocusEffect to prevent page 1 being called every time
+
+  const loadRequests = async (reset: boolean = false) => {
     try {
-      setIsLoading(true);
-      const requests = await SyncService.getDeliveryRequests();
-      setRequests(requests);
+      let pageToLoad = currentPage;
+      
+      if (reset) {
+        setIsLoading(true);
+        setCurrentPage(1);
+        setRequests([]);
+        pageToLoad = 1; // Use page 1 for the API call
+      } else {
+        setLoadingMore(true);
+      }
+
+      let response;
+      if (user?.role === "driver") {
+        response = await deliveryService.getAssignedDeliveryRequests(pageToLoad);
+      } else {
+        response = await deliveryService.getDeliveryRequests(pageToLoad);
+      }
+
+      const newRequests = response.results || [];
+      
+      // Set hasMore based on next field
+      setHasMore(!!response.next);
+      
+      if (reset) {
+        setRequests(newRequests);
+        setTotalCount(response.count || 0);
+      } else {
+        setRequests(prev => [...prev, ...newRequests]);
+      }
+
+      setCurrentPage(prev => prev + 1);
+      
     } catch (error) {
-      console.error("Error loading requests:", error);
+      console.log("Error loading requests:", error);
     } finally {
       setIsLoading(false);
+      setLoadingMore(false);
     }
   };
 
@@ -32,11 +72,21 @@ export default function DeliveryRequestsScreen() {
     try {
       // Force sync when pulling to refresh
       await SyncService.forceSync();
-      await loadRequests();
+      // Reset to first page and clear existing items
+      setRequests([]);
+      setCurrentPage(1);
+      setHasMore(true);
+      await loadRequests(true); // Reset to first page
     } catch (error) {
-      console.error("Error refreshing:", error);
+      console.log("Error refreshing:", error);
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const handleLoadMore = () => {
+    if (!loadingMore && hasMore) {
+      loadRequests(false); // Load next page
     }
   };
 
@@ -44,10 +94,14 @@ export default function DeliveryRequestsScreen() {
     switch (status) {
       case "pending":
         return "bg-yellow-100 text-yellow-800";
+      case "assigned":
+        return "bg-blue-100 text-blue-800";
       case "in_progress":
         return "bg-blue-100 text-blue-800";
       case "completed":
         return "bg-success text-white";
+      case "cancelled":
+        return "bg-red-100 text-red-800";
       default:
         return "bg-gray-100 text-gray-800";
     }
@@ -66,18 +120,73 @@ export default function DeliveryRequestsScreen() {
     }
   };
 
-  const renderRequest = ({ item }: { item: DeliveryRequest }) => (
-    <TouchableOpacity
-      onPress={() => router.push(`/delivery-details/${item.id}`)}
-      className="bg-white p-6 rounded-2xl mb-4 mx-4"
-      style={{
-        shadowColor: "#6B7280",
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.06,
-        shadowRadius: 6,
-        elevation: 2,
-      }}
-    >
+  const getRoleSpecificTitle = () => {
+    if (user?.role === "driver") {
+      return "Assigned Deliveries";
+    }
+    return "My Delivery Requests";
+  };
+
+  const getRoleSpecificSubtitle = () => {
+    if (user?.role === "driver") {
+      if (totalCount > 0) {
+        return `${requests.length} of ${totalCount} delivery${totalCount !== 1 ? 's' : ''} assigned to you`;
+      }
+      return `${requests.length} delivery${requests.length !== 1 ? 's' : ''} assigned to you`;
+    }
+    if (totalCount > 0) {
+      return `${requests.length} of ${totalCount} request${totalCount !== 1 ? 's' : ''}`;
+    }
+    return `${requests.length} request${requests.length !== 1 ? 's' : ''}`;
+  };
+
+  const getRoleSpecificEmptyMessage = () => {
+    if (user?.role === "driver") {
+      return {
+        title: "No deliveries assigned",
+        message: "You don't have any deliveries assigned to you yet. Pull down to refresh or tap the button below to check for new assignments.",
+        actionText: "Check for Assignments"
+      };
+    }
+    return {
+      title: "No requests yet",
+      message: "Create your first delivery request to get started with managing deliveries",
+      actionText: "Create Request"
+    };
+  };
+
+  const handleCreateRequest = () => {
+    if (user?.role === "driver") {
+      Alert.alert("Driver Action", "Drivers cannot create delivery requests. You can only view and update assigned deliveries.");
+      return;
+    }
+    router.push("/new-delivery");
+  };
+
+  const handleEmptyStateAction = () => {
+    if (user?.role === "driver") {
+      // For drivers, refresh to check for new assignments
+      onRefresh();
+    } else {
+      // For customers, create new request
+      handleCreateRequest();
+    }
+  };
+
+  const renderRequest = ({ item }: { item: DeliveryRequest }) => {
+    
+    return (
+      <TouchableOpacity
+        onPress={() => router.push(`/delivery-details/${item.id}`)}
+        className="bg-white p-6 rounded-2xl mb-4 mx-4"
+        style={{
+          shadowColor: "#6B7280",
+          shadowOffset: { width: 0, height: 1 },
+          shadowOpacity: 0.06,
+          shadowRadius: 6,
+          elevation: 2,
+        }}
+      >
       {/* Header with customer info and status */}
       <View className="flex-row justify-between items-start mb-4">
         <View className="flex-1 pr-4">
@@ -175,6 +284,7 @@ export default function DeliveryRequestsScreen() {
       </View>
     </TouchableOpacity>
   );
+};
 
   return (
     <View className="flex-1 bg-gray-50">
@@ -189,25 +299,29 @@ export default function DeliveryRequestsScreen() {
         <View className="flex-row items-center justify-between">
           <View>
             <Text className="font-quicksand-bold text-2xl text-dark-100 mb-1">
-              Delivery Requests
+              {getRoleSpecificTitle()}
             </Text>
             <Text className="font-quicksand text-gray-100 text-base">
-              {requests.length} request{requests.length !== 1 ? 's' : ''}
+              {getRoleSpecificSubtitle()}
             </Text>
           </View>
-          <TouchableOpacity
-            onPress={() => router.push("/new-delivery")}
-            className="bg-primary p-3 rounded-full"
-            style={{
-              shadowColor: "#FE8C00",
-              shadowOffset: { width: 0, height: 2 },
-              shadowOpacity: 0.15,
-              shadowRadius: 4,
-              elevation: 2,
-            }}
-          >
-            <Ionicons name="add" size={24} color="white" />
-          </TouchableOpacity>
+          <View className="flex-row space-x-2">
+            {user?.role !== "driver" && (
+              <TouchableOpacity
+                onPress={handleCreateRequest}
+                className="bg-primary p-3 rounded-full"
+                style={{
+                  shadowColor: "#FE8C00",
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.15,
+                  shadowRadius: 4,
+                  elevation: 2,
+                }}
+              >
+                <Ionicons name="add" size={24} color="white" />
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
       </View>
 
@@ -215,7 +329,7 @@ export default function DeliveryRequestsScreen() {
       <FlatList
         data={requests}
         renderItem={renderRequest}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item,index) => `${index}-${item.id}-${item.createdAt}`}
         contentContainerStyle={{ paddingVertical: 16 }}
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -223,6 +337,28 @@ export default function DeliveryRequestsScreen() {
             refreshing={refreshing}
             onRefresh={onRefresh}
           />
+        }
+        onEndReached={handleLoadMore}
+        onEndReachedThreshold={0.5}
+        ListFooterComponent={
+          loadingMore && requests.length > 0 ? (
+            <View className="py-6 px-6">
+              <View className="flex-row items-center justify-center space-x-3">
+                <View className="animate-spin">
+                  <Ionicons name="refresh" size={20} color="#878787" />
+                </View>
+                <Text className="font-quicksand text-gray-100 text-center text-sm">
+                  Loading more deliveries...
+                </Text>
+              </View>
+            </View>
+          ) : !hasMore && requests.length > 0 ? (
+            <View className="py-6 px-6">
+              <Text className="font-quicksand text-gray-100 text-center text-sm">
+                No more deliveries to load
+              </Text>
+            </View>
+          ) : null
         }
         ListEmptyComponent={
           <View className="flex-1 items-center justify-center py-16 px-6">
@@ -237,13 +373,13 @@ export default function DeliveryRequestsScreen() {
                 <Ionicons name="list" size={48} color="#878787" />
               </View>
               <Text className="font-quicksand-bold text-gray-100 text-xl text-center mb-3">
-                No requests yet
+                {getRoleSpecificEmptyMessage().title}
               </Text>
               <Text className="font-quicksand text-gray-100 text-center text-base leading-6 mb-8">
-                Create your first delivery request to get started with managing deliveries
+                {getRoleSpecificEmptyMessage().message}
               </Text>
               <TouchableOpacity
-                onPress={() => router.push("/new-delivery")}
+                onPress={handleEmptyStateAction}
                 className="bg-primary px-8 py-4 rounded-xl"
                 style={{
                   shadowColor: "#FE8C00",
@@ -254,7 +390,7 @@ export default function DeliveryRequestsScreen() {
                 }}
               >
                 <Text className="font-quicksand-bold text-white text-center text-lg">
-                  Create Request
+                  {getRoleSpecificEmptyMessage().actionText}
                 </Text>
               </TouchableOpacity>
             </View>

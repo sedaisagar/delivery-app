@@ -1,34 +1,59 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ScrollView, Text, TouchableOpacity, View } from "react-native";
 import CustomRefreshControl from "../../components/RefreshControl";
+import { useAuth } from "../../contexts/AuthContext";
+import { deliveryService } from "../../services/delivery";
 import { SyncService } from "../../services/sync";
+import { Statistics } from "../../types/delivery";
 
 export default function HomeScreen() {
+  const { user } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
-  const [stats, setStats] = useState({
-    activeRequests: 0,
-    completedRequests: 0,
+  const [selectedPeriod, setSelectedPeriod] = useState<"all" | "today" | "week" | "month">("all");
+  const [stats, setStats] = useState<Statistics>({
+    totalDeliveries: 0,
+    completedDeliveries: 0,
+    pendingDeliveries: 0,
+    inProgressDeliveries: 0,
+    assignedDeliveries: 0,
+    todayCompleted: 0,
+    todayPending: 0,
+    weekCompleted: 0,
+    monthCompleted: 0,
+    period: "all"
   });
 
+  const isDriver = user?.role === "driver";
+  const isCustomer = user?.role === "customer";
+
+  // Load stats when component mounts
   useEffect(() => {
     loadStats();
   }, []);
 
+  // Refresh stats when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      loadStats();
+    }, [])
+  );
+
   const loadStats = async () => {
     try {
-      const requests = await SyncService.getDeliveryRequests();
-      const active = requests.filter(req => req.status === "pending" || req.status === "in_progress").length;
-      const completed = requests.filter(req => req.status === "completed").length;
-
-      setStats({
-        activeRequests: active,
-        completedRequests: completed,
-      });
+      const statistics = await deliveryService.getStatistics(selectedPeriod, user?.role as "customer" | "driver");
+      setStats(statistics);
+      console.log("Loaded statistics:", statistics);
     } catch (error) {
-      console.error("Error loading stats:", error);
+      console.log("Error loading statistics:", error);
     }
+  };
+
+  const handlePeriodChange = (period: "all" | "today" | "week" | "month") => {
+    setSelectedPeriod(period);
+    loadStats();
   };
 
   const onRefresh = async () => {
@@ -37,10 +62,17 @@ export default function HomeScreen() {
       await SyncService.forceSync();
       await loadStats();
     } catch (error) {
-      console.error("Error refreshing:", error);
+      console.log("Error refreshing:", error);
     } finally {
       setRefreshing(false);
     }
+  };
+
+  const handleCreateRequest = () => {
+    if (isDriver) {
+      return; // Drivers cannot create requests
+    }
+    router.push("/new-delivery");
   };
 
   return (
@@ -66,37 +98,67 @@ export default function HomeScreen() {
             Welcome back!
           </Text>
           <Text className="font-quicksand text-gray-100 text-lg">
-            Manage your delivery requests
+            {isDriver ? "Manage your assigned deliveries" : "Manage your delivery requests"}
           </Text>
         </View>
 
         {/* Quick Actions */}
         <View className="space-y-4">
-          <TouchableOpacity
-            onPress={() => router.push("/new-delivery")}
-            className="bg-primary p-6 rounded-2xl"
-            style={{
-              shadowColor: "#FE8C00",
-              shadowOffset: { width: 0, height: 2 },
-              shadowOpacity: 0.2,
-              shadowRadius: 4,
-              elevation: 3,
-            }}
-          >
-            <View className="flex-row items-center justify-between">
-              <View className="flex-1">
-                <Text className="font-quicksand-bold text-white text-xl mb-2">
-                  New Delivery Request
-                </Text>
-                <Text className="font-quicksand text-white/90 text-base">
-                  Create a new delivery request
-                </Text>
+          {isCustomer && (
+            <TouchableOpacity
+              onPress={handleCreateRequest}
+              className="bg-primary p-6 rounded-2xl"
+              style={{
+                shadowColor: "#FE8C00",
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.2,
+                shadowRadius: 4,
+                elevation: 3,
+              }}
+            >
+              <View className="flex-row items-center justify-between">
+                <View className="flex-1">
+                  <Text className="font-quicksand-bold text-white text-xl mb-2">
+                    New Delivery Request
+                  </Text>
+                  <Text className="font-quicksand text-white/90 text-base">
+                    Create a new delivery request
+                  </Text>
+                </View>
+                <View className="bg-white/20 p-3 rounded-full">
+                  <Ionicons name="add" size={24} color="white" />
+                </View>
               </View>
-              <View className="bg-white/20 p-3 rounded-full">
-                <Ionicons name="add" size={24} color="white" />
+            </TouchableOpacity>
+          )}
+
+          {isDriver && (
+            <TouchableOpacity
+              onPress={() => router.push("/(tabs)/delivery-requests")}
+              className="bg-blue-500 p-6 rounded-2xl"
+              style={{
+                shadowColor: "#3B82F6",
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.2,
+                shadowRadius: 4,
+                elevation: 3,
+              }}
+            >
+              <View className="flex-row items-center justify-between">
+                <View className="flex-1">
+                  <Text className="font-quicksand-bold text-white text-xl mb-2">
+                    View My Assignments
+                  </Text>
+                  <Text className="font-quicksand text-white/90 text-base">
+                    Check your assigned delivery requests
+                  </Text>
+                </View>
+                <View className="bg-white/20 p-3 rounded-full">
+                  <Ionicons name="list" size={24} color="white" />
+                </View>
               </View>
-            </View>
-          </TouchableOpacity>
+            </TouchableOpacity>
+          )}
 
           <TouchableOpacity
             onPress={() => router.push("/(tabs)/delivery-requests")}
@@ -123,6 +185,43 @@ export default function HomeScreen() {
               </View>
             </View>
           </TouchableOpacity>
+          
+          {/* Statistics Period Selector */}
+          <View className="bg-white p-4 rounded-2xl mt-5" style={{
+            shadowColor: "#6B7280",
+            shadowOffset: { width: 0, height: 1 },
+            shadowOpacity: 0.06,
+            shadowRadius: 6,
+            elevation: 2,
+          }}>
+            <Text className="font-quicksand-bold text-dark-100 text-lg mb-3">
+              Statistics Period
+            </Text>
+            <View className="flex-row space-x-2">
+                {(["all", "today", "week", "month"] as const).map((period) => (
+                <TouchableOpacity
+                  key={period}
+                  onPress={() => handlePeriodChange(period)}
+                  className={`flex-1 py-2 px-3 me-2 rounded-lg ${
+                    selectedPeriod === period
+                      ? "bg-primary"
+                      : "border-primary border-2 border-solid"
+                  }`}
+                >
+                  <Text
+                    className={`font-quicksand-bold text-center text-sm ${
+                      selectedPeriod === period
+                        ? "text-white"
+                        : "text-gray-600"
+                    }`}
+                  >
+                    {period.charAt(0).toUpperCase() + period.slice(1)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
         </View>
       </View>
 
@@ -155,13 +254,13 @@ export default function HomeScreen() {
                 </View>
               </View>
               <Text className="font-quicksand-bold text-primary text-3xl">
-                {stats.activeRequests}
+                {stats.inProgressDeliveries}
               </Text>
             </View>
             <View className="bg-orange-50 p-3 rounded-xl">
               <Text className="font-quicksand text-orange-800 text-sm text-center">
-                {stats.activeRequests > 0 
-                  ? `${stats.activeRequests} request${stats.activeRequests !== 1 ? 's' : ''} pending`
+                {stats.inProgressDeliveries > 0 
+                  ? `${stats.inProgressDeliveries} request${stats.inProgressDeliveries !== 1 ? 's' : ''} in progress`
                   : "No active requests"
                 }
               </Text>
@@ -190,13 +289,13 @@ export default function HomeScreen() {
                 </View>
               </View>
               <Text className="font-quicksand-bold text-success text-3xl">
-                {stats.completedRequests}
+                {stats.completedDeliveries}
               </Text>
             </View>
             <View className="bg-green-50 p-3 rounded-xl">
               <Text className="font-quicksand text-green-800 text-sm text-center">
-                {stats.completedRequests > 0 
-                  ? `${stats.completedRequests} delivery${stats.completedRequests !== 1 ? 'ies' : 'y'} completed`
+                {stats.completedDeliveries > 0 
+                  ? `${stats.completedDeliveries} delivery${stats.completedDeliveries !== 1 ? 'ies' : 'y'} completed`
                   : "No completed deliveries yet"
                 }
               </Text>

@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Modal, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Modal, Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import MapWrapper, { Marker, PROVIDER_GOOGLE } from './MapWrapper';
 
 interface MapPickerProps {
@@ -11,7 +11,12 @@ interface MapPickerProps {
   initialLocation?: { latitude: number; longitude: number };
 }
 
-export default function MapPicker({ visible, onClose, onLocationSelect, initialLocation }: MapPickerProps) {
+export default function MapPicker({ 
+  visible, 
+  onClose, 
+  onLocationSelect, 
+  initialLocation 
+}: MapPickerProps) {
   const [region, setRegion] = useState({
     latitude: 37.78825,
     longitude: -122.4324,
@@ -26,6 +31,9 @@ export default function MapPicker({ visible, onClose, onLocationSelect, initialL
   const [searchQuery, setSearchQuery] = useState('');
   const mapRef = useRef<any>(null);
 
+  // Check if we're on web platform
+  const isWeb = Platform.OS === 'web';
+
   useEffect(() => {
     if (visible) {
       getCurrentLocation();
@@ -33,7 +41,7 @@ export default function MapPicker({ visible, onClose, onLocationSelect, initialL
   }, [visible]);
 
   useEffect(() => {
-    if (initialLocation) {
+    if (initialLocation && initialLocation.latitude && initialLocation.longitude) {
       setRegion({
         latitude: initialLocation.latitude,
         longitude: initialLocation.longitude,
@@ -52,7 +60,7 @@ export default function MapPicker({ visible, onClose, onLocationSelect, initialL
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission denied', 'Location permission is required');
+        Alert.alert('Permission denied', 'Location permission is required to get your current location');
         return;
       }
 
@@ -80,7 +88,8 @@ export default function MapPicker({ visible, onClose, onLocationSelect, initialL
         });
       }
     } catch (error) {
-      Alert.alert('Error', 'Failed to get current location');
+      console.log("Error getting current location:", error);
+      Alert.alert('Error', 'Failed to get current location. Please try again.');
     }
   };
 
@@ -89,38 +98,38 @@ export default function MapPicker({ visible, onClose, onLocationSelect, initialL
     const { latitude, longitude } = event.nativeEvent.coordinate;
     
     try {
+      // Get address for the tapped location
       const address = await Location.reverseGeocodeAsync({
         latitude,
         longitude,
       });
 
+      let fullAddress = "Selected location";
       if (address.length > 0) {
-        const fullAddress = `${address[0].street}, ${address[0].city}, ${address[0].region}`;
-        setSelectedLocation({
-          latitude,
-          longitude,
-          address: fullAddress,
-        });
-      } else {
-        // If no address found, still set the coordinates
-        setSelectedLocation({
-          latitude,
-          longitude,
-          address: `Location at ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
-        });
+        fullAddress = `${address[0].street || ''}, ${address[0].city || ''}, ${address[0].region || ''}`.replace(/^,\s*/, '').replace(/,\s*$/, '');
       }
-    } catch (error) {
-      console.error('Error getting address:', error);
-      // Still set the location even if address lookup fails
+
       setSelectedLocation({
         latitude,
         longitude,
-        address: `Location at ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
+        address: fullAddress,
+      });
+
+      // Don't update region to prevent zooming out
+    } catch (error) {
+      console.log("Error getting address for location:", error);
+      // Still update location even if address lookup fails
+      setSelectedLocation({
+        latitude,
+        longitude,
+        address: "Selected location",
       });
     }
   };
 
   const handleMarkerPress = (event: any) => {
+    if (isWeb) return;
+    
     console.log('Marker pressed:', event.nativeEvent);
     // When marker is pressed, it should be selected
     if (selectedLocation) {
@@ -159,7 +168,10 @@ export default function MapPicker({ visible, onClose, onLocationSelect, initialL
           longitudeDelta: 0.05, // Normal street level zoom
         };
         setRegion(newRegion);
-        mapRef.current?.animateToRegion?.(newRegion);
+        
+        if (!isWeb && mapRef.current?.animateToRegion) {
+          mapRef.current.animateToRegion(newRegion);
+        }
         
         // Get address for the searched location
         const address = await Location.reverseGeocodeAsync({
@@ -185,9 +197,112 @@ export default function MapPicker({ visible, onClose, onLocationSelect, initialL
         Alert.alert('Not Found', 'Location not found. Please try a different search term.');
       }
     } catch (error) {
-      Alert.alert('Error', 'Failed to search for location');
+      console.log('Error searching location:', error);
+      Alert.alert('Error', 'Failed to search for location. Please try again.');
     }
   };
+
+  const getMapRegion = () => {
+    if (selectedLocation) {
+      return {
+        latitude: selectedLocation.latitude,
+        longitude: selectedLocation.longitude,
+        latitudeDelta: 0.05, // Normal street level zoom
+        longitudeDelta: 0.05, // Normal street level zoom
+      };
+    }
+    return region;
+  };
+
+  // Web fallback component
+  if (isWeb) {
+    return (
+      <Modal
+        visible={visible}
+        animationType="slide"
+        presentationStyle="fullScreen"
+      >
+        <View className="flex-1 bg-gray-50">
+          {/* Header */}
+          <View className="bg-white px-6 pt-12 pb-6 shadow-header">
+            <View className="flex-row items-center justify-between">
+              <TouchableOpacity onPress={onClose} className="p-2">
+                <Ionicons name="close" size={24} color="#181C2E" />
+              </TouchableOpacity>
+              <Text className="font-quicksand-bold text-xl text-dark-100">
+                Select Location (Web)
+              </Text>
+              <TouchableOpacity onPress={handleConfirm} className="p-2">
+                <Text className="font-quicksand-bold text-primary text-lg">
+                  Confirm
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Search Bar */}
+          <View className="px-6 py-4 bg-white shadow-header">
+            <View className="flex-row space-x-3">
+              <View className="flex-1 bg-gray-50 rounded-xl p-4">
+                <TextInput
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  placeholder="Search for a location..."
+                  className="font-quicksand text-base"
+                  onSubmitEditing={searchLocation}
+                />
+              </View>
+              <TouchableOpacity
+                onPress={searchLocation}
+                className="bg-primary p-4 rounded-xl shadow-primary"
+              >
+                <Ionicons name="search" size={20} color="white" />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Web Fallback */}
+          <View className="flex-1 bg-gray-100 p-6">
+            <View className="bg-white p-6 rounded-xl shadow-card">
+              <View className="bg-blue-100 p-4 rounded-full self-center mb-6">
+                <Ionicons name="map" size={48} color="#3B82F6" />
+              </View>
+              <Text className="font-quicksand-bold text-dark-100 text-xl text-center mb-3">
+                Maps Not Available on Web
+              </Text>
+              <Text className="font-quicksand text-gray-100 text-center text-base leading-6 mb-6">
+                Please use the search feature above to find and select a location. The map view is only available on mobile devices.
+              </Text>
+              
+              {selectedLocation && (
+                <View className="bg-green-50 p-4 rounded-xl mb-4">
+                  <Text className="font-quicksand-bold text-green-800 text-base mb-2">
+                    Selected Location:
+                  </Text>
+                  <Text className="font-quicksand text-green-700 text-sm">
+                    {selectedLocation.address}
+                  </Text>
+                  <Text className="font-quicksand text-green-700 text-sm">
+                    Coordinates: {selectedLocation.latitude.toFixed(6)}, {selectedLocation.longitude.toFixed(6)}
+                  </Text>
+                </View>
+              )}
+              
+              <TouchableOpacity
+                onPress={handleConfirm}
+                className="bg-primary p-4 rounded-xl"
+                disabled={!selectedLocation}
+              >
+                <Text className="font-quicksand-bold text-white text-center text-lg">
+                  {selectedLocation ? 'Confirm Location' : 'Search for a location first'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    );
+  }
 
   return (
     <Modal
@@ -236,42 +351,35 @@ export default function MapPicker({ visible, onClose, onLocationSelect, initialL
 
         {/* Map */}
         <View className="flex-1">
-          <MapWrapper
-            ref={mapRef}
-            provider={PROVIDER_GOOGLE}
-            style={{ flex: 1 }}
-            region={region}
-            onPress={handleMapPress}
-            showsUserLocation={true}
-            showsMyLocationButton={true}
-            mapType="standard"
-            zoomEnabled={true}
-            scrollEnabled={true}
-            rotateEnabled={true}
-            pitchEnabled={true}
-          >
-            {selectedLocation && (
-              <Marker
-                coordinate={{
-                  latitude: selectedLocation.latitude,
-                  longitude: selectedLocation.longitude,
-                }}
-                title="Selected Location"
-                description={selectedLocation.address}
-                pinColor="red"
-                onPress={handleMarkerPress}
-                draggable={true}
-                onDragEnd={(event: any) => {
-                  const { latitude, longitude } = event.nativeEvent.coordinate;
-                  setSelectedLocation(prev => prev ? {
-                    ...prev,
-                    latitude,
-                    longitude,
-                  } : null);
-                }}
-              />
-            )}
-          </MapWrapper>
+          <View className="h-64 rounded-xl overflow-hidden">
+            <MapWrapper
+              ref={mapRef}
+              provider={PROVIDER_GOOGLE}
+              style={{ flex: 1 }}
+              region={region}
+              onPress={handleMapPress}
+              showsUserLocation={true}
+              showsMyLocationButton={true}
+              mapType="standard"
+              zoomEnabled={true}
+              scrollEnabled={true}
+              rotateEnabled={true}
+              pitchEnabled={true}
+            >
+              {/* Pickup Marker */}
+              {selectedLocation && (
+                <Marker
+                  coordinate={{
+                    latitude: selectedLocation.latitude,
+                    longitude: selectedLocation.longitude,
+                  }}
+                  title="Selected Location"
+                  description={selectedLocation.address}
+                  pinColor="#FE8C00"
+                />
+              )}
+            </MapWrapper>
+          </View>
         </View>
 
         {/* Selected Location Info */}

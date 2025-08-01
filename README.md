@@ -232,3 +232,12 @@ interface DeliveryRequest {
 
 This project is licensed under the MIT License.
 # delivery-app
+
+
+# Android Release Steps
+0. npx expo prebuild -p android
+1. openssl rand -hex 32
+2. [text](https://reactnative.dev/docs/signed-apk-android)
+3. npx react-native build-android --mode=release
+4. npx expo run:android --variant release 
+

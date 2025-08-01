@@ -1,35 +1,49 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useEffect, useState } from "react";
+import { useFocusEffect } from "@react-navigation/native";
+import { useCallback, useEffect, useState } from "react";
 import { Alert, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import CustomRefreshControl from "../../components/RefreshControl";
+import { useAuth } from "../../contexts/AuthContext";
+import { deliveryService } from "../../services/delivery";
+import { StorageService } from "../../services/storage";
 import { SyncService } from "../../services/sync";
+import { Statistics } from "../../types/delivery";
 
 export default function ProfileScreen() {
   const [refreshing, setRefreshing] = useState(false);
-  const [stats, setStats] = useState({
-    totalRequests: 0,
-    completedRequests: 0,
-    pendingRequests: 0,
+  const [stats, setStats] = useState<Statistics>({
+    totalDeliveries: 0,
+    completedDeliveries: 0,
+    pendingDeliveries: 0,
+    inProgressDeliveries: 0,
+    assignedDeliveries: 0,
+    todayCompleted: 0,
+    todayPending: 0,
+    weekCompleted: 0,
+    monthCompleted: 0,
+    period: "all"
   });
+  const { user, logout } = useAuth();
 
+  // Load stats when component mounts
   useEffect(() => {
     loadStats();
   }, []);
 
+  // Refresh stats when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      loadStats();
+    }, [])
+  );
+
   const loadStats = async () => {
     try {
-      const requests = await SyncService.getDeliveryRequests();
-      const total = requests.length;
-      const completed = requests.filter(req => req.status === "completed").length;
-      const pending = requests.filter(req => req.status === "pending" || req.status === "in_progress").length;
-
-      setStats({
-        totalRequests: total,
-        completedRequests: completed,
-        pendingRequests: pending,
-      });
+      const statistics = await deliveryService.getStatistics("all", user?.role as "customer" | "driver");
+      setStats(statistics);
+      console.log("Loaded profile statistics:", statistics);
     } catch (error) {
-      console.error("Error loading stats:", error);
+      console.log("Error loading statistics:", error);
     }
   };
 
@@ -39,31 +53,75 @@ export default function ProfileScreen() {
       await SyncService.forceSync();
       await loadStats();
     } catch (error) {
-      console.error("Error refreshing:", error);
+      console.log("Error refreshing:", error);
     } finally {
       setRefreshing(false);
     }
   };
 
-  const handleLogout = () => {
-    Alert.alert(
-      "Logout",
-      "Are you sure you want to logout?",
-      [
-        {
-          text: "Cancel",
-          style: "cancel",
-        },
-        {
-          text: "Logout",
-          style: "destructive",
-          onPress: () => {
-            // TODO: Implement logout logic
-            Alert.alert("Success", "Logged out successfully");
+  const handleLogout = async () => {
+    try {
+      // Check for pending sync data
+      const pendingSync = await StorageService.getPendingSync();
+      const deliveryRequests = await StorageService.getDeliveryRequests();
+      
+      if (pendingSync.length > 0 || deliveryRequests.length > 0) {
+        Alert.alert(
+          "Logout Warning",
+          "You have pending sync data and local delivery requests. Logging out will clear all this data. Are you sure you want to continue?",
+          [
+            {
+              text: "Cancel",
+              style: "cancel",
+            },
+            {
+              text: "Logout",
+              style: "destructive",
+              onPress: async () => {
+                try {
+                  await logout();
+                } catch (error) {
+                  console.log("Error during logout:", error);
+                  Alert.alert("Error", "Failed to logout. Please try again.");
+                }
+              },
+            },
+          ]
+        );
+      } else {
+        try {
+          await logout();
+        } catch (error) {
+          console.log("Error during logout:", error);
+          Alert.alert("Error", "Failed to logout. Please try again.");
+        }
+      }
+    } catch (error) {
+      console.log("Error checking pending sync:", error);
+      // Fallback to simple logout if we can't check pending data
+      Alert.alert(
+        "Logout",
+        "Are you sure you want to logout?",
+        [
+          {
+            text: "Cancel",
+            style: "cancel",
           },
-        },
-      ]
-    );
+          {
+            text: "Logout",
+            style: "destructive",
+            onPress: async () => {
+              try {
+                await logout();
+              } catch (error) {
+                console.log("Logout error:", error);
+                Alert.alert("Error", "Failed to logout. Please try again.");
+              }
+            },
+          },
+        ]
+      );
+    }
   };
 
   return (
@@ -90,10 +148,16 @@ export default function ProfileScreen() {
           </View>
           <View className="flex-1 ml-5">
             <Text className="font-quicksand-bold text-dark-100 text-2xl mb-1">
-              John Doe
+              {user?.first_name && user?.last_name 
+                ? `${user.first_name} ${user.last_name}`
+                : user?.username || "User"
+              }
             </Text>
             <Text className="font-quicksand text-gray-100 text-base">
-              Delivery Manager
+              {user?.role === "driver" ? "Delivery Driver" : "Customer"}
+            </Text>
+            <Text className="font-quicksand text-gray-100 text-sm">
+              {user?.email}
             </Text>
           </View>
         </View>
@@ -122,13 +186,13 @@ export default function ProfileScreen() {
                 </View>
               </View>
               <Text className="font-quicksand-bold text-blue-600 text-3xl">
-                {stats.totalRequests}
+                {stats.totalDeliveries}
               </Text>
             </View>
             <View className="bg-blue-50 p-3 rounded-xl">
               <Text className="font-quicksand text-blue-800 text-sm text-center">
-                {stats.totalRequests > 0
-                  ? `${stats.totalRequests} request${stats.totalRequests !== 1 ? 's' : ''} total`
+                {stats.totalDeliveries > 0
+                  ? `${stats.totalDeliveries} request${stats.totalDeliveries !== 1 ? 's' : ''} total`
                   : "No requests yet"
                 }
               </Text>
@@ -155,7 +219,7 @@ export default function ProfileScreen() {
               </View>
               <View className="ml-2">
                 <Text className="font-quicksand-bold text-success text-2xl mb-2">
-                  {stats.completedRequests}
+                  {stats.completedDeliveries}
                 </Text>
                 <Text className="font-quicksand text-gray-100 text-sm">
                   Successfully delivered
@@ -182,7 +246,7 @@ export default function ProfileScreen() {
               </View>
               <View className="ml-2">
                 <Text className="font-quicksand-bold text-yellow-600 text-2xl mb-2">
-                  {stats.pendingRequests}
+                  {stats.pendingDeliveries}
                 </Text>
                 <Text className="font-quicksand text-gray-100 text-sm">
                   In progress
